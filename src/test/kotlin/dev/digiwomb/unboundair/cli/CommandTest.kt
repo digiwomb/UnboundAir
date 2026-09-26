@@ -16,7 +16,8 @@ import java.nio.file.Path
 import java.time.LocalDateTime
 
 /**
- * Tests for the `status` (BE-01) and `scan` (BE-02) commands against the [FakeScanner].
+ * Tests for the `status` (BE-01) and `scan` (BE-02) commands against the [FakeScanner]
+ * ("integration" layer of docs/teststrategie.md).
  *
  * The status and scan tests exercise [StatusCommand] and [ScanCommand] directly,
  * so the command output and written bytes are easy to assert. `scan` runs the
