@@ -1,7 +1,10 @@
 package dev.digiwomb.unboundair
 
+import dev.digiwomb.unboundair.cli.CropCommand
 import dev.digiwomb.unboundair.cli.ScanCommand
 import dev.digiwomb.unboundair.cli.StatusCommand
+import dev.digiwomb.unboundair.processing.ColorMode
+import dev.digiwomb.unboundair.processing.PageSettings
 import dev.digiwomb.unboundair.scanner.ScannerClient
 import dev.digiwomb.unboundair.scanner.ScannerException
 import org.springframework.boot.ApplicationArguments
@@ -28,7 +31,8 @@ class UnboundAirApplication :
     private var commandExitCode = 0
 
     /**
-     * Dispatches the first argument to a subcommand (`status` or `scan`).
+     * Dispatches the first argument to a subcommand (`status`, `scan`, or
+     * `crop`).
      *
      * Failures are reported on stderr and set a non-zero exit code; they do
      * not throw, so the process always terminates normally.
@@ -55,8 +59,27 @@ class UnboundAirApplication :
             }
 
             "scan" -> {
-                val result = ScanCommand(client).run(cli.dpi, cli.out?.let { Path.of(it) })
-                println("Saved: ${result.path} (${result.size} bytes)")
+                val settings = PageSettings(colorMode = cli.colorMode, keepRaw = cli.keepRaw)
+                val result =
+                    ScanCommand(client, settings) { warning -> System.err.println(warning) }.run(cli.dpi, cli.out?.let { Path.of(it) })
+                val message =
+                    if (result.rawPath != null) {
+                        "Saved: ${result.path} (${result.size} bytes), raw: ${result.rawPath}"
+                    } else {
+                        "Saved: ${result.path} (${result.size} bytes)"
+                    }
+                println(message)
+            }
+
+            "crop" -> {
+                // The crop command is a pure image operation (BE-03): it runs
+                // only the crop step and must never change the color of a page,
+                // so it deliberately ignores --color-mode and --keep-raw and
+                // uses the default settings. Those flags are scan-specific.
+                require(cli.positional.size == 2) { "crop requires two arguments: <input> <output>" }
+                val command = CropCommand { warning -> System.err.println(warning) }
+                val result = command.run(Path.of(cli.positional[0]), Path.of(cli.positional[1]))
+                println("Saved: $result")
             }
 
             else -> {
@@ -68,10 +91,13 @@ class UnboundAirApplication :
 
     private fun parseCliArgs(raw: Array<String>): CliArgs {
         var command: String? = null
+        val positional = mutableListOf<String>()
         var host = ScannerClient.DEFAULT_HOST
         var port = ScannerClient.DEFAULT_PORT
         var dpi = 300
         var out: String? = null
+        var colorMode = ColorMode.GRAY
+        var keepRaw = false
 
         var i = 0
         while (i < raw.size) {
@@ -96,19 +122,41 @@ class UnboundAirApplication :
                     i++
                 }
 
+                "--color-mode" -> {
+                    colorMode = parseColorMode(valueAfter(raw, i, "--color-mode"))
+                    i++
+                }
+
+                "--keep-raw" -> {
+                    keepRaw = true
+                }
+
                 else -> {
                     if (token.startsWith("--")) {
                         throw IllegalArgumentException("Unknown option: $token")
                     }
                     if (command == null) {
                         command = token
+                    } else {
+                        positional.add(token)
                     }
                 }
             }
             i++
         }
-        return CliArgs(command, host, port, dpi, out)
+        return CliArgs(command, host, port, dpi, out, colorMode, keepRaw, positional.toList())
     }
+
+    /**
+     * Maps the `--color-mode` value to a [ColorMode] (SV-03): `gray` is the
+     * default, `color` keeps the page in its scanned color.
+     */
+    private fun parseColorMode(value: String): ColorMode =
+        when (value) {
+            "gray" -> ColorMode.GRAY
+            "color" -> ColorMode.COLOR
+            else -> throw IllegalArgumentException("Invalid --color-mode: $value (expected 'gray' or 'color')")
+        }
 
     private fun valueAfter(
         raw: Array<String>,
@@ -130,6 +178,9 @@ class UnboundAirApplication :
         val port: Int,
         val dpi: Int,
         val out: String?,
+        val colorMode: ColorMode,
+        val keepRaw: Boolean,
+        val positional: List<String>,
     )
 
     private companion object {
@@ -138,11 +189,16 @@ class UnboundAirApplication :
                 "\n" +
                 "Commands:\n" +
                 "  status                            Show scanner status and firmware version.\n" +
-                "  scan [--dpi 300|600] [--out FILE] Scan one page and write the raw JPEG.\n" +
+                "  scan [--dpi 300|600] [--out FILE] Scan one page and write the processed JPEG.\n" +
+                "  crop IN OUT                       Crop an existing JPEG file (no scanner needed).\n" +
                 "\n" +
                 "Options:\n" +
                 "  --host HOST                       Scanner host (default ${ScannerClient.DEFAULT_HOST}).\n" +
-                "  --port PORT                       Scanner port (default ${ScannerClient.DEFAULT_PORT}).\n"
+                "  --port PORT                       Scanner port (default ${ScannerClient.DEFAULT_PORT}).\n" +
+                "  --dpi 300|600                     Scan resolution (default 300).\n" +
+                "  --out FILE                        Target file for scan (default: a timestamped file).\n" +
+                "  --color-mode gray|color           Color mode of scan (default gray).\n" +
+                "  --keep-raw                        Also store the raw JPEG of scan.\n"
     }
 }
 
