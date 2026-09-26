@@ -65,3 +65,12 @@ interface ProcessingStep {
         warn: (String) -> Unit,
     ): PageImage
 }
+
+/**
+ * Creates a [PageImage] from a file without requiring the [dev.digiwomb.unboundair.image] package
+ * in callers. This factory keeps the CLI layer decoupled from the image package (architecture guard).
+ *
+ * @param file the JPEG file to read.
+ * @return a [PageImage] with freshly read [JpegInfo].
+ */
+fun pageImage(file: Path): PageImage = PageImage(file, JpegInfo.read(file))
