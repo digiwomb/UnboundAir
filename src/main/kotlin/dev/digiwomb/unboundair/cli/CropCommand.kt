@@ -46,7 +46,7 @@ class CropCommand(
             val processor = PageProcessor(listOf(CropStep(settings)))
             val image = pageImage(input)
             val result = processor.process(image, workDir) { /* warnings ignored for CLI */ }
-            Files.createDirectories(output.parent)
+            output.parent?.let { Files.createDirectories(it) }
             if (result.file == input) {
                 // The crop step changed nothing (e.g. the page fills the whole
                 // frame), so the result is the input file itself: copy it, never

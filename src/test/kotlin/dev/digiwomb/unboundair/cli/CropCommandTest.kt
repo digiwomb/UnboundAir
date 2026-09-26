@@ -28,7 +28,11 @@ import java.security.MessageDigest
  * 2. `din_a4_300dpi_raw.jpg` has no black border, so the crop changes
  *    nothing and the command must copy the input unchanged (byte-equal, and
  *    the input file must survive — a move would make it vanish).
- * 3. A missing or non-regular input file is rejected with an
+ * 3. A bare output path without a parent directory component (the
+ *    reviewer's `crop in.jpg out.jpg`) is accepted, not a
+ *    NullPointerException; the file is written to the working directory
+ *    and removed afterwards.
+ * 4. A missing or non-regular input file is rejected with an
  *    [IllegalArgumentException] before any processing starts.
  *
  * Offline (DC-03): no scanner and no network access; the only outside
@@ -102,6 +106,45 @@ class CropCommandTest {
     }
 
     /**
+     * BE-03 -- bare output path, regression for the reviewer defect: a
+     * destination without a parent directory component (e.g. `crop in.jpg
+     * out.jpg`) used to crash with a NullPointerException, because
+     * `Path.parent` is `null` for a bare file name and the command passed
+     * it straight to `Files.createDirectories`. The guard must simply skip
+     * directory creation, mirroring the `target.parent?.let { ... }` of
+     * [ScanCommand].
+     *
+     * The output is deliberately a bare relative path, which is resolved
+     * against the test process's working directory; the A4 fixture keeps
+     * the test independent of `jpegtran` (the whole-frame pass-through
+     * never runs it), and a `finally` block removes the file again so the
+     * working directory is left as found.
+     */
+    @Test
+    fun `BE-03 crop accepts a bare output path without a parent directory`() {
+        val input = TestImages.copy("din_a4_300dpi_raw.jpg", tempDir)
+        val output = Path.of(BARE_OUTPUT_NAME)
+
+        try {
+            val result = command.run(input, output)
+
+            assertThat(result)
+                .`as`("the result must name the requested output path")
+                .isEqualTo(output)
+            assertThat(Files.exists(output))
+                .`as`(
+                    "a bare output path (null parent) must not crash; " +
+                        "the file is written to the working directory",
+                ).isTrue()
+            assertThat(Files.readAllBytes(output))
+                .`as`("no black border means no crop: the output must be byte-equal to the input")
+                .isEqualTo(Files.readAllBytes(input))
+        } finally {
+            Files.deleteIfExists(output)
+        }
+    }
+
+    /**
      * BE-03 -- invalid input. A path that does not exist, or a path that is
      * a directory, must be rejected with an [IllegalArgumentException] before
      * any processing starts, naming the offending path in its message.
@@ -150,5 +193,14 @@ class CropCommandTest {
 
     private companion object {
         const val GOLDEN_FILE = "/golden/envelope_dl_300dpi_crop.jpg"
+
+        /**
+         * The bare file name of the regression test's output. It has no
+         * parent directory component, so `Path.parent` is `null`. The name
+         * is deliberately distinctive, never a plain `out.jpg`, so the test
+         * can neither be confused with nor overwrite an unrelated file that
+         * exists in the working directory under a common name.
+         */
+        const val BARE_OUTPUT_NAME = "unboundair-bare-out.jpg"
     }
 }
