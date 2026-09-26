@@ -64,6 +64,8 @@ Entscheidung des Auftraggebers (siehe `docs/plan.md`, DC-03).
 | `scanner` | 2 | 87 % (148/171) | **72 %** (95/132) | 75 % (95/126) |
 | **gesamt** | **11** | **86 %** (428/497) | **73 %** (280/386) | **76 %** (280/370) |
 
+**Bestätigungslauf Meilenstein 2** (26.09.2026, Commit `f51c65e`): Nach der neuen Factory `pageImage` im Kern-Paket `processing` wurde der volle Lauf wiederholt — **73 % (280/386)**, unverändert grün gegen die Schwelle. Line Coverage 86 % (428/497), Test Strength 76 %, 1287 ausgeführte Tests, Dauer 23 min 7 s. Der Score ist mit der zusätzlichen Zeile gleich geblieben; die Schwelle hält.
+
 **Entscheidung: `mutationThreshold = 73`** in `build.gradle.kts` — exakt der gemessene Gesamtwert. Die Schwelle ist ein **Boden, kein Ziel**: Sie friert den erreichten Stand ein, damit ein späterer Rückgang der Assertion-Qualität den Task rot macht, statt unbemerkt durchzulaufen. Es wurde **nichts gesenkt** — vorher gab es gar keine Schwelle. Steigt der Score, wird die Zahl angehoben; gesenkt wird sie nicht stillschweigend.
 
 Bewusst **nicht** gesetzt sind `coverageThreshold` und `testStrengthThreshold`: Eine Schwelle, die scharf ist, genügt; drei parallele Schwellen machen jeden Rückgang zu einer Fehlersuche über drei Kennzahlen.
