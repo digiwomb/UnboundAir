@@ -166,7 +166,11 @@ class ScanCommand(
          */
         fun rawFileName(fileName: String): String {
             val dot = fileName.lastIndexOf('.')
-            return if (dot in 1 until fileName.length) {
+            // A dot is only an extension separator when at least one character
+            // follows it: a trailing dot (dot == length - 1) is not a real
+            // extension, so `_raw` is appended and the result never ends in a
+            // bare dot.
+            return if (dot in 1 until fileName.length - 1) {
                 fileName.substring(0, dot) + "_raw" + fileName.substring(dot)
             } else {
                 fileName + "_raw"
