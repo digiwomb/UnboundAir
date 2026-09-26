@@ -60,7 +60,8 @@ class UnboundAirApplication :
 
             "scan" -> {
                 val settings = PageSettings(colorMode = cli.colorMode, keepRaw = cli.keepRaw)
-                val result = ScanCommand(client, settings).run(cli.dpi, cli.out?.let { Path.of(it) })
+                val result =
+                    ScanCommand(client, settings) { warning -> System.err.println(warning) }.run(cli.dpi, cli.out?.let { Path.of(it) })
                 val message =
                     if (result.rawPath != null) {
                         "Saved: ${result.path} (${result.size} bytes), raw: ${result.rawPath}"
@@ -76,7 +77,8 @@ class UnboundAirApplication :
                 // so it deliberately ignores --color-mode and --keep-raw and
                 // uses the default settings. Those flags are scan-specific.
                 require(cli.positional.size == 2) { "crop requires two arguments: <input> <output>" }
-                val result = CropCommand().run(Path.of(cli.positional[0]), Path.of(cli.positional[1]))
+                val command = CropCommand { warning -> System.err.println(warning) }
+                val result = command.run(Path.of(cli.positional[0]), Path.of(cli.positional[1]))
                 println("Saved: $result")
             }
 

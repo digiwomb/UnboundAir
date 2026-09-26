@@ -23,6 +23,12 @@ import java.time.format.DateTimeFormatter
  * temporary working directory and its final result is moved to the target
  * path; the working directory is deleted afterwards.
  *
+ * Processing warnings (for example: no paper found, page carried through
+ * uncropped) are reported through [warn] instead of being printed by the
+ * command itself, so the caller decides where they go (SV-02). Warnings of
+ * the scan flow itself (for example: the 300 dpi fallback) travel through
+ * the [client] and its own warn sink.
+ *
  * With [PageSettings.keepRaw] set, the raw JPEG is additionally written to
  * a file derived from the target name: the same name with `_raw` inserted
  * before the extension (SV-06, [rawFileName]).
@@ -30,10 +36,13 @@ import java.time.format.DateTimeFormatter
  * @property client the scanner client to scan the page through.
  * @property settings the page settings of the processing chain; defaults to
  *   a [PageSettings] with all defaults (grayscale, no raw kept).
+ * @property warn sink for processing warnings, e.g. a page carried through
+ *   uncropped (SV-02); defaults to a no-op.
  */
 class ScanCommand(
     private val client: ScannerClient,
     private val settings: PageSettings = PageSettings(),
+    private val warn: (String) -> Unit = {},
 ) {
     /**
      * The outcome of a [run]: where the processed page was written, how
@@ -92,7 +101,7 @@ class ScanCommand(
 
             val processor = PageProcessor(listOf(CropStep(settings), GrayscaleStep(settings)))
             val image = pageImage(rawFile)
-            val result = processor.process(image, workDir) { /* warnings ignored for CLI */ }
+            val result = processor.process(image, workDir, warn)
 
             if (result.file == rawFile) {
                 // The chain changed nothing: the result is the raw file

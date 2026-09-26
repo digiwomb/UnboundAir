@@ -18,11 +18,18 @@ import java.nio.file.StandardCopyOption
  * cleans intermediate files, leaving only the final result, which is then
  * moved to the requested output path.
  *
+ * Processing warnings (for example: no paper found, page carried through
+ * uncropped) are reported through [warn] instead of being printed by the
+ * command itself, so the caller decides where they go (SV-02).
+ *
  * @property settings the page settings for the crop step; defaults to the
  *   default [PageSettings] (no grayscale, default plausibility thresholds).
+ * @property warn sink for processing warnings, e.g. a page carried through
+ *   uncropped (SV-02); defaults to a no-op.
  */
 class CropCommand(
     private val settings: PageSettings = PageSettings(),
+    private val warn: (String) -> Unit = {},
 ) {
     /**
      * Runs the crop step on [input] and writes the result to [output].
@@ -45,7 +52,7 @@ class CropCommand(
         try {
             val processor = PageProcessor(listOf(CropStep(settings)))
             val image = pageImage(input)
-            val result = processor.process(image, workDir) { /* warnings ignored for CLI */ }
+            val result = processor.process(image, workDir, warn)
             output.parent?.let { Files.createDirectories(it) }
             if (result.file == input) {
                 // The crop step changed nothing (e.g. the page fills the whole
