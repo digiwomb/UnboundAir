@@ -1,7 +1,7 @@
 ---
-description: Uses Devstral Small 2 2512 for a third, independent local implementation or test attempt after two local attempts failed.
+description: Uses Gemma 4 26B A4B for a third, independent local implementation or test attempt after two local attempts failed.
 mode: subagent
-model: lmstudio/mistralai/devstral-small-2-2512
+model: lmstudio/google/gemma-4-26b-a4b
 temperature: 0.1
 ---
 

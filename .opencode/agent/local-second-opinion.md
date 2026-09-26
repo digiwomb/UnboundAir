@@ -1,7 +1,7 @@
 ---
-description: Uses Qwen3 Coder 30B for a second local implementation or test attempt after the primary local model failed.
+description: Uses Muse Glimmer for a second local implementation or test attempt after the primary local model failed.
 mode: subagent
-model: lmstudio/qwen/qwen3-coder-30b
+model: lmstudio/meta/muse-glimmer
 temperature: 0.1
 ---
 
