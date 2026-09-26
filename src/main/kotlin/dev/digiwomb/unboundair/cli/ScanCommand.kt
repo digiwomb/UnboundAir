@@ -1,36 +1,81 @@
 package dev.digiwomb.unboundair.cli
 
+import dev.digiwomb.unboundair.processing.CropStep
+import dev.digiwomb.unboundair.processing.GrayscaleStep
+import dev.digiwomb.unboundair.processing.PageProcessor
+import dev.digiwomb.unboundair.processing.PageSettings
+import dev.digiwomb.unboundair.processing.pageImage
 import dev.digiwomb.unboundair.scanner.ScannerClient
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 /**
- * The `scan` command: scans one page and writes the raw JPEG to a file.
+ * The `scan` command (BE-02): scans one page and writes the processed page
+ * (crop plus grayscale according to [PageSettings.colorMode], SV-03) to a
+ * file.
+ *
+ * The page is scanned through the [ScannerClient] and the raw JPEG is then
+ * run through the processing chain: a [CropStep] and a [GrayscaleStep]
+ * driven by [PageSettings]. Like [CropCommand], the chain runs in a
+ * temporary working directory and its final result is moved to the target
+ * path; the working directory is deleted afterwards.
+ *
+ * With [PageSettings.keepRaw] set, the raw JPEG is additionally written to
+ * a file derived from the target name: the same name with `_raw` inserted
+ * before the extension (SV-06, [rawFileName]).
+ *
+ * @property client the scanner client to scan the page through.
+ * @property settings the page settings of the processing chain; defaults to
+ *   a [PageSettings] with all defaults (grayscale, no raw kept).
  */
 class ScanCommand(
     private val client: ScannerClient,
+    private val settings: PageSettings = PageSettings(),
 ) {
     /**
-     * Outcome of a scan: where the raw JPEG was written and how big it is.
+     * The outcome of a [run]: where the processed page was written, how
+     * large it is, and where the raw JPEG was written.
+     *
+     * [path] is the target the processed page was written to (the requested
+     * `--out` path or the default file name, [defaultFileName]). [size] is
+     * the size of that processed page in bytes. [rawPath] is the file the
+     * raw JPEG was written to, and `null` when [PageSettings.keepRaw] is
+     * false; it is the target's file name with `_raw` inserted before the
+     * extension ([rawFileName]) in the target's directory.
      */
     data class Result(
         val path: Path,
         val size: Int,
+        val rawPath: Path?,
     )
 
     /**
-     * Scans one page and writes the raw JPEG to a file.
+     * Scans one page at [dpi], processes it (crop, then color mode), and
+     * writes the processed page to [out] or to the default file name,
+     * [defaultFileName]. With [PageSettings.keepRaw] set, the raw JPEG is
+     * additionally written to [rawFileName] of the target name.
      *
-     * Milestone 1 only writes the raw file; cropping and PDF assembly come
-     * in milestone 2. If [out] is null, a default file name derived from
-     * the dpi is used. Failures are not handled here; they propagate to
-     * the caller.
+     * The raw bytes are written to a temporary working directory, the
+     * processing chain ([CropStep], [GrayscaleStep]) runs there, and the
+     * final result is moved to the target path. When the chain changed
+     * nothing (color mode, and a crop that covers the whole frame), the
+     * result *is* the raw file and gets copied instead, so the raw file
+     * stays available for the keep-raw write.
      *
-     * @param dpi requested resolution: 300 or 600, validated by [ScannerClient.scan].
-     * @param out target file, or null to use the default file name.
-     * @return the target path and the number of raw bytes written.
+     * @param dpi the resolution to scan at (300 or 600); validated by the
+     *   [ScannerClient].
+     * @param out the target path for the processed page, or `null` for the
+     *   default file name in the current directory.
+     * @return where the processed page was written, its size, and the raw
+     *   file (or `null`).
+     * @throws dev.digiwomb.unboundair.scanner.ScannerException the scanner
+     *   is unreachable, its firmware is not supported, or no scan-ready
+     *   status was received.
+     * @throws IllegalArgumentException the raw JPEG cannot be read or the
+     *   external `jpegtran` fails.
      */
     fun run(
         dpi: Int,
@@ -38,23 +83,94 @@ class ScanCommand(
     ): Result {
         val bytes = client.scan(dpi)
         val target = out ?: Path.of(defaultFileName(dpi))
-        Files.write(target, bytes)
-        return Result(target, bytes.size)
+        target.parent?.let { Files.createDirectories(it) }
+
+        val workDir = Files.createTempDirectory("unboundair-scan")
+        try {
+            val rawFile = workDir.resolve("raw.jpg")
+            Files.write(rawFile, bytes)
+
+            val processor = PageProcessor(listOf(CropStep(settings), GrayscaleStep(settings)))
+            val image = pageImage(rawFile)
+            val result = processor.process(image, workDir) { /* warnings ignored for CLI */ }
+
+            if (result.file == rawFile) {
+                // The chain changed nothing: the result is the raw file
+                // itself. Copy it, never move, so the raw file stays in
+                // place until the working directory is deleted.
+                Files.copy(rawFile, target, StandardCopyOption.REPLACE_EXISTING)
+            } else {
+                Files.move(result.file, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+
+            // The raw file is the exact scanner payload, byte-equal to it
+            // (SV-06), so it is written from the in-memory bytes.
+            val rawPath =
+                if (settings.keepRaw) {
+                    val rawTarget = target.resolveSibling(rawFileName(target.fileName.toString()))
+                    Files.write(rawTarget, bytes)
+                    rawTarget
+                } else {
+                    null
+                }
+
+            return Result(target, Files.size(target).toInt(), rawPath)
+        } finally {
+            runCatching { deleteRecursively(workDir) }
+        }
+    }
+
+    private fun deleteRecursively(dir: Path) {
+        Files.list(dir).use {
+            it.forEach { entry ->
+                if (Files.isDirectory(entry)) {
+                    deleteRecursively(entry)
+                } else {
+                    Files.deleteIfExists(entry)
+                }
+            }
+        }
+        Files.deleteIfExists(dir)
     }
 
     companion object {
+        /** Timestamp format of the default file name, e.g. `20260922-143500`. */
         private val TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
         /**
-         * Default output file name for a scan, e.g. `iscan_20260922-143500_300dpi.jpg`.
+         * The default file name for a scanned page: `iscan_<timestamp>_<dpi>dpi.jpg`
+         * with a timestamp like `20260922-143500`, as in the reference
+         * implementation (BE-02).
          *
-         * @param dpi the resolution the page was scanned at, 300 or 600.
-         * @param now the timestamp to use; defaults to the current time, injectable for tests.
-         * @return the file name, e.g. `iscan_20260922-143500_300dpi.jpg`.
+         * @param dpi the resolution the page was scanned at (300 or 600).
+         * @param now the point in time to stamp; injectable for tests,
+         *   defaults to the current time.
          */
         fun defaultFileName(
             dpi: Int,
             now: LocalDateTime = LocalDateTime.now(),
         ): String = "iscan_${TIMESTAMP.format(now)}_${dpi}dpi.jpg"
+
+        /**
+         * The file name of the raw JPEG that belongs to a processed page
+         * (SV-06): the same name with `_raw` inserted before the last
+         * extension, e.g. `iscan_20260922-143500_300dpi.jpg` maps to
+         * `iscan_20260922-143500_300dpi_raw.jpg`.
+         *
+         * A name without an extension (or with a trailing or leading dot
+         * only) gets `_raw` appended, so the result never ends in a bare
+         * dot: `page` maps to `page_raw`.
+         *
+         * @param fileName the file name of the processed page.
+         * @return the file name to write the raw JPEG to.
+         */
+        fun rawFileName(fileName: String): String {
+            val dot = fileName.lastIndexOf('.')
+            return if (dot in 1 until fileName.length) {
+                fileName.substring(0, dot) + "_raw" + fileName.substring(dot)
+            } else {
+                fileName + "_raw"
+            }
+        }
     }
 }
