@@ -17,9 +17,10 @@ import java.nio.file.Path
 /**
  * Tests for the subcommand dispatch of [UnboundAirApplication] (issue #21: the dispatch
  * around `crop`, the new `--color-mode` and `--keep-raw` options, and the updated usage
- * text). "Integration" layer of docs/teststrategie.md: every test boots the full Spring
- * context without a web environment, passes arguments exactly as they would appear on the
- * command line, and asserts the exit code plus the files written to disk.
+ * text), plus the processing-warning forwarding to stderr (issue #18: SV-02). "Integration"
+ * layer of docs/teststrategie.md: every test boots the full Spring context without a web
+ * environment, passes arguments exactly as they would appear on the command line, and
+ * asserts the exit code plus the files written to disk.
  *
  * The crop dispatch test needs no scanner at all (`crop` is a pure file operation,
  * BE-03); the parse-error tests fail before any scanner connection is attempted, so they
@@ -64,6 +65,35 @@ class DispatchCommandTest {
         assertThat(Files.readAllBytes(input))
             .`as`("crop must never modify its input file")
             .isEqualTo(TestImages.bytes(ENVELOPE))
+    }
+
+    /**
+     * SV-02 -- processing warnings reach the user (issue #18): the `crop` dispatch
+     * wires the processing warning sink to `System.err`. The `dark_page.jpg` fixture
+     * contains no paper, so the crop finds none and must carry the page through
+     * uncropped: the command still succeeds (exit code 0) and the output file is a
+     * byte-for-byte copy of the input, while stderr carries the warning. This is the
+     * SV-02 acceptance from docs/plan.md -- a dark test image stays uncropped and the
+     * log carries a warning -- proved through the real sink, end to end.
+     */
+    @Test
+    fun `SV-02 crop of a dark page without paper exits 0 and reports the no-paper warning on stderr`(
+        @TempDir dir: Path,
+    ) {
+        val input = TestImages.copy(DARK_PAGE, dir)
+        val output = dir.resolve("dark.jpg")
+
+        val result = exitCodeWithStderr("crop", input.toString(), output.toString())
+
+        assertThat(result.first)
+            .`as`("a crop that finds no paper must still succeed with exit code 0")
+            .isEqualTo(0)
+        assertThat(result.second)
+            .`as`("the SV-02 acceptance is a warning in the log: the dispatch must print it on stderr")
+            .contains("no paper")
+        assertThat(Files.readAllBytes(output))
+            .`as`("the page is carried through uncropped: the output must be the input, byte-for-byte")
+            .isEqualTo(TestImages.bytes(DARK_PAGE))
     }
 
     /**
@@ -263,6 +293,9 @@ class DispatchCommandTest {
     private companion object {
         /** The committed DL envelope fixture: a real color JPEG with a black border. */
         const val ENVELOPE = "envelope_dl_300dpi_raw.jpg"
+
+        /** A dark fixture without any paper: the crop finds none and warns (SV-02). */
+        const val DARK_PAGE = "dark_page.jpg"
 
         /** JPEG start-of-image marker: `FF D8 FF`. */
         val jpegSoi = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
